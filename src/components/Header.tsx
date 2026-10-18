@@ -56,30 +56,26 @@ export function Header({ systemStatus }: HeaderProps) {
             className={`flex items-center gap-2 px-3 py-1 rounded-md text-xs font-mono border transition-all ${
               isLiveFalkor
                 ? 'bg-emerald-950/40 border-emerald-800/50 text-emerald-300'
-                : 'bg-indigo-950/40 border-indigo-800/50 text-indigo-300'
+                : 'bg-rose-950/60 border-rose-800/60 text-rose-300'
             }`}
-            title={systemStatus?.details || 'Connecting to FalkorDB...'}
+            title={systemStatus?.details || 'FalkorDB status'}
           >
             <span className="relative flex h-2 w-2">
               <span
                 className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
-                  isLiveFalkor ? 'bg-emerald-400' : 'bg-indigo-400'
+                  isLiveFalkor ? 'bg-emerald-400' : 'bg-rose-400'
                 }`}
               />
               <span
                 className={`relative inline-flex rounded-full h-2 w-2 ${
-                  isLiveFalkor ? 'bg-emerald-500' : 'bg-indigo-500'
+                  isLiveFalkor ? 'bg-emerald-500' : 'bg-rose-500'
                 }`}
               />
             </span>
             <div className="flex items-center gap-1.5">
-              {isLiveFalkor ? (
-                <Database className="w-3.5 h-3.5 text-emerald-400" />
-              ) : (
-                <Cpu className="w-3.5 h-3.5 text-indigo-400" />
-              )}
+              <Database className={`w-3.5 h-3.5 ${isLiveFalkor ? 'text-emerald-400' : 'text-rose-400'}`} />
               <span className="font-medium">
-                {isLiveFalkor ? 'FalkorDB Live' : 'FalkorDB Graph Engine'}
+                {isLiveFalkor ? 'FalkorDB Live' : 'FalkorDB Disconnected'}
               </span>
             </div>
           </div>

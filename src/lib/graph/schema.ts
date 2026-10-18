@@ -28,6 +28,7 @@ export const GRAPH_INIT_CYPHER = [
   `CREATE INDEX FOR (i:Installation) ON (i.id);`,
   `CREATE INDEX FOR (i:Installation) ON (i.snapshotId);`,
   `CREATE INDEX FOR (pv:PackageVersion) ON (pv.id);`,
+  `CREATE INDEX FOR (v:Vulnerability) ON (v.id);`,
 ];
 
 export const CYPHER_QUERIES = {
@@ -185,5 +186,102 @@ export const CYPHER_QUERIES = {
       head(snapshots) as latestSnapshot,
       size(snapshots) as snapshotsCount
     ORDER BY r.name ASC
+  `,
+
+  // Batch insert vulnerability advisory nodes
+  MERGE_VULNERABILITIES: `
+    UNWIND $vulns AS v
+    MERGE (vuln:Vulnerability { id: v.id })
+    ON CREATE SET 
+      vuln.cveId = v.cveId,
+      vuln.summary = v.summary,
+      vuln.details = v.details,
+      vuln.severity = v.severity,
+      vuln.fixedVersion = v.fixedVersion,
+      vuln.url = v.url,
+      vuln.publishedAt = v.publishedAt,
+      vuln.modifiedAt = v.modifiedAt
+  `,
+
+  // Batch create [:AFFECTED_BY] edges from PackageVersion to Vulnerability
+  LINK_PACKAGE_VULNERABILITIES: `
+    UNWIND $links AS link
+    MATCH (pv:PackageVersion { id: link.packageVersionId })
+    MATCH (v:Vulnerability { id: link.vulnerabilityId })
+    MERGE (pv)-[:AFFECTED_BY]->(v)
+  `,
+
+  // Query: Get all vulnerable installations in a repository snapshot with their advisory details
+  GET_VULNERABLE_PACKAGES_IN_SNAPSHOT: `
+    MATCH (s:Snapshot { id: $snapshotId })-[:HAS_ROOT]->(root:Installation)
+    MATCH (root)-[:DEPENDS_ON*1..15]->(i:Installation)-[:INSTANCE_OF]->(pv:PackageVersion)-[:AFFECTED_BY]->(v:Vulnerability)
+    RETURN DISTINCT
+      i.id as installationId,
+      i.packagePath as packagePath,
+      i.name as name,
+      i.version as version,
+      i.isDirect as isDirect,
+      i.depth as depth,
+      v.id as vulnId,
+      v.cveId as cveId,
+      v.summary as summary,
+      v.severity as severity,
+      v.fixedVersion as fixedVersion,
+      v.url as url
+    ORDER BY v.severity DESC, i.name ASC
+  `,
+
+  // Query: Find vulnerabilities that affect multiple repositories across the portfolio (Shared Blast Radius)
+  GET_SHARED_VULNERABILITIES: `
+    MATCH (p:Portfolio { id: $portfolioId })-[:CONTAINS]->(r:Repository)-[:HAS_SNAPSHOT]->(s:Snapshot)-[:HAS_ROOT]->(root:Installation)
+    WHERE s.status = 'SUCCESS'
+    MATCH (root)-[:DEPENDS_ON*1..15]->(i:Installation)-[:INSTANCE_OF]->(pv:PackageVersion)-[:AFFECTED_BY]->(v:Vulnerability)
+    WITH v, pv, r, s, i
+    WITH v, pv.name as packageName, collect(DISTINCT pv.version) as versions, collect(DISTINCT {
+      repoId: r.id,
+      repoName: r.name,
+      repoUrl: r.url,
+      snapshotId: s.id,
+      installationPath: i.packagePath,
+      isDirect: i.isDirect
+    }) as occurrences
+    WHERE size(occurrences) > 1
+    RETURN 
+      v.id as vulnId,
+      v.cveId as cveId,
+      v.summary as summary,
+      v.severity as severity,
+      v.fixedVersion as fixedVersion,
+      v.url as url,
+      packageName,
+      versions,
+      occurrences,
+      size(occurrences) as totalAffectedRepos
+    ORDER BY size(occurrences) DESC, v.severity DESC
+  `,
+
+  // Query: All vulnerable instances across portfolio
+  GET_ALL_VULNERABILITIES_IN_PORTFOLIO: `
+    MATCH (p:Portfolio { id: $portfolioId })-[:CONTAINS]->(r:Repository)-[:HAS_SNAPSHOT]->(s:Snapshot)-[:HAS_ROOT]->(root:Installation)
+    WHERE s.status = 'SUCCESS'
+    MATCH (root)-[:DEPENDS_ON*1..15]->(i:Installation)-[:INSTANCE_OF]->(pv:PackageVersion)-[:AFFECTED_BY]->(v:Vulnerability)
+    RETURN DISTINCT
+      v.id as vulnId,
+      v.cveId as cveId,
+      v.summary as summary,
+      v.severity as severity,
+      v.fixedVersion as fixedVersion,
+      v.url as url,
+      pv.name as packageName,
+      pv.version as version,
+      r.id as repoId,
+      r.name as repoName,
+      r.url as repoUrl,
+      s.id as snapshotId,
+      i.id as installationId,
+      i.isDirect as isDirect,
+      i.packagePath as packagePath,
+      i.depth as depth
+    ORDER BY v.severity DESC, r.name ASC
   `
 };

@@ -5,7 +5,8 @@ import type {
   InvestigationResult, 
   RepositorySummary, 
   DependencyPathItem,
-  CrossRepoSharing 
+  CrossRepoSharing,
+  VulnerabilityNode
 } from '../../types/index.ts';
 
 /**
@@ -82,11 +83,32 @@ export async function investigatePackage(snapshotId: string, installationId: str
     installationId
   });
 
+  // 5. Query attached vulnerabilities
+  let vulnerabilities: VulnerabilityNode[] = [];
+  try {
+    const vulnRes = await driver.query<VulnerabilityNode>(`
+      MATCH (target:Installation { id: $installationId })-[:INSTANCE_OF]->(pv:PackageVersion)-[:AFFECTED_BY]->(v:Vulnerability)
+      RETURN DISTINCT
+        v.id as id,
+        v.cveId as cveId,
+        v.summary as summary,
+        v.details as details,
+        v.severity as severity,
+        v.fixedVersion as fixedVersion,
+        v.url as url
+      ORDER BY v.severity DESC
+    `, { installationId });
+    vulnerabilities = vulnRes.data || [];
+  } catch (vulnErr) {
+    console.warn(`[Queries] Vulnerability lookup note:`, vulnErr);
+  }
+
   return {
     target,
     path: chain,
     introducingDirectDep,
-    sharedInRepositories: sharingRes.data || []
+    sharedInRepositories: sharingRes.data || [],
+    vulnerabilities
   };
 }
 
@@ -96,6 +118,17 @@ export async function investigatePackage(snapshotId: string, installationId: str
 export async function getSystemStatus() {
   const driver = await getFalkorDriver();
   const conn = driver.getConnectionStatus();
+
+  if (!conn.connected) {
+    return {
+      connected: false,
+      engineType: conn.type,
+      details: conn.details,
+      totalRepositories: 0,
+      activePortfolio: 'default'
+    };
+  }
+
   const repos = await listRepositories('default');
   
   return {
@@ -106,3 +139,31 @@ export async function getSystemStatus() {
     activePortfolio: 'default'
   };
 }
+
+/**
+ * Get vulnerable installations in a specific repository snapshot
+ */
+export async function getVulnerablePackagesInSnapshot(snapshotId: string) {
+  const driver = await getFalkorDriver();
+  const res = await driver.query(CYPHER_QUERIES.GET_VULNERABLE_PACKAGES_IN_SNAPSHOT, { snapshotId });
+  return res.data;
+}
+
+/**
+ * Query cross-repository shared vulnerabilities (blast radius)
+ */
+export async function getSharedVulnerabilities(portfolioId = 'default') {
+  const driver = await getFalkorDriver();
+  const res = await driver.query(CYPHER_QUERIES.GET_SHARED_VULNERABILITIES, { portfolioId });
+  return res.data;
+}
+
+/**
+ * Query all vulnerabilities across all repositories in portfolio
+ */
+export async function getAllPortfolioVulnerabilities(portfolioId = 'default') {
+  const driver = await getFalkorDriver();
+  const res = await driver.query(CYPHER_QUERIES.GET_ALL_VULNERABILITIES_IN_PORTFOLIO, { portfolioId });
+  return res.data;
+}
+

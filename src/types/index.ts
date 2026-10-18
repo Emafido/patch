@@ -75,6 +75,7 @@ export interface InvestigationResult {
   path: DependencyPathItem[];
   introducingDirectDep: DependencyPathItem | null;
   sharedInRepositories: CrossRepoSharing[];
+  vulnerabilities?: VulnerabilityNode[];
 }
 
 export interface RepositorySummary {
@@ -94,3 +95,57 @@ export interface IngestionResult {
   snapshot: SnapshotNode;
   message: string;
 }
+
+export type VulnerabilitySeverity = 'CRITICAL' | 'HIGH' | 'MODERATE' | 'LOW' | 'UNKNOWN';
+
+export interface VulnerabilityNode {
+  id: string;
+  cveId?: string;
+  summary: string;
+  details?: string;
+  severity: VulnerabilitySeverity;
+  fixedVersion?: string;
+  url: string;
+  publishedAt?: string;
+  modifiedAt?: string;
+}
+
+export interface VulnerableInstallation {
+  installation: InstallationNode;
+  vulnerability: VulnerabilityNode;
+  dependencyPath: DependencyPathItem[];
+  introducingDirectDep: DependencyPathItem | null;
+}
+
+export interface SharedVulnerabilityGroup {
+  vulnerability: VulnerabilityNode;
+  affectedPackageName: string;
+  affectedVersions: string[];
+  affectedRepositories: Array<{
+    repoId: string;
+    repoName: string;
+    repoUrl: string;
+    snapshotId: string;
+    installationPath: string;
+    isDirect: boolean;
+    introducingDirectDepName?: string;
+  }>;
+  totalAffectedRepos: number;
+}
+
+export interface RemediationCandidate {
+  rank: number;
+  advisoryId: string;
+  cveId?: string;
+  packageName: string;
+  severity: VulnerabilitySeverity;
+  affectedRepositoriesCount: number;
+  affectedRepositories: string[];
+  minDepth: number;
+  isDirectInAnyRepo: boolean;
+  introducingDirectDeps: string[];
+  recommendedAction: string;
+  uncertainties: string[];
+  verificationSteps: string[];
+}
+

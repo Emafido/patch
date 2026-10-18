@@ -19,7 +19,7 @@ class FalkorLiveDriver implements FalkorDriver {
     return false;
   }
 
-  getConnectionStatus(): { connected: boolean; type: 'FALKORDB_LIVE' | 'IN_MEMORY_GRAPH'; details: string } {
+  getConnectionStatus(): { connected: boolean; type: 'FALKORDB_LIVE' | 'DISCONNECTED' | 'IN_MEMORY_GRAPH'; details: string } {
     return {
       connected: true,
       type: 'FALKORDB_LIVE',
@@ -45,13 +45,47 @@ class FalkorLiveDriver implements FalkorDriver {
   }
 }
 
+class DisconnectedFalkorDriver implements FalkorDriver {
+  private errorMessage: string;
+
+  constructor(errorMessage: string) {
+    this.errorMessage = errorMessage;
+  }
+
+  isMock(): boolean {
+    return false;
+  }
+
+  getConnectionStatus(): { connected: boolean; type: 'FALKORDB_LIVE' | 'DISCONNECTED' | 'IN_MEMORY_GRAPH'; details: string } {
+    return {
+      connected: false,
+      type: 'DISCONNECTED',
+      details: this.errorMessage
+    };
+  }
+
+  async close(): Promise<void> {}
+
+  async query<T = Record<string, unknown>>(): Promise<QueryResult<T>> {
+    throw new Error(`[FalkorDB Connection Error] Real FalkorDB is required. Database is disconnected: ${this.errorMessage}`);
+  }
+}
+
 // Global singleton to persist driver across Next.js API reloads in dev mode
 const globalForFalkor = globalThis as unknown as {
   falkorDriverInstance?: FalkorDriver;
 };
 
-export async function getFalkorDriver(): Promise<FalkorDriver> {
-  if (globalForFalkor.falkorDriverInstance) {
+export async function getFalkorDriver(options?: { allowMockInTests?: boolean }): Promise<FalkorDriver> {
+  // Explicit opt-in for unit tests only
+  if (options?.allowMockInTests || process.env.PATCH_TEST_MOCK_GRAPH === 'true') {
+    if (!globalForFalkor.falkorDriverInstance || !globalForFalkor.falkorDriverInstance.isMock()) {
+      globalForFalkor.falkorDriverInstance = new InMemoryGraphEngine();
+    }
+    return globalForFalkor.falkorDriverInstance;
+  }
+
+  if (globalForFalkor.falkorDriverInstance && !globalForFalkor.falkorDriverInstance.isMock() && globalForFalkor.falkorDriverInstance.getConnectionStatus().connected) {
     return globalForFalkor.falkorDriverInstance;
   }
 
@@ -62,43 +96,51 @@ export async function getFalkorDriver(): Promise<FalkorDriver> {
   const username = process.env.FALKORDB_USERNAME;
   const password = process.env.FALKORDB_PASSWORD;
 
-  // Try to connect to real FalkorDB if available
   try {
-    // Dynamic import to avoid build errors if package is still installing
-    const falkorModule = await import('falkordb').catch(() => null);
-    if (falkorModule && (falkorModule.FalkorDB || falkorModule.default)) {
-      const FalkorDB = falkorModule.FalkorDB || falkorModule.default;
-      let client;
-
-      if (url) {
-        client = await FalkorDB.connect({ url });
-      } else if (password) {
-        client = await FalkorDB.connect({
-          socket: { host, port },
-          username: username || undefined,
-          password
-        });
-      } else {
-        client = await FalkorDB.connect({
-          socket: { host, port }
-        });
-      }
-
-      // Quick test query to ensure database is responsive
-      const testGraph = client.selectGraph(graphName);
-      await testGraph.query('RETURN 1 as test');
-
-      const liveDriver = new FalkorLiveDriver(client, graphName);
-      globalForFalkor.falkorDriverInstance = liveDriver;
-      console.log(`[FalkorDB] Connected successfully to ${url ? 'cloud instance' : `${host}:${port}`}`);
-      return liveDriver;
+    let falkorModule;
+    try {
+      falkorModule = await import('falkordb');
+    } catch (importErr) {
+      console.error('[FalkorDB import error]:', importErr);
+      throw new Error(`Failed to load falkordb module: ${importErr instanceof Error ? importErr.message : String(importErr)}`);
     }
-  } catch (err) {
-    console.warn(`[FalkorDB] Live connection failed (${err instanceof Error ? err.message : String(err)}). Falling back to In-Memory Graph Engine.`);
-  }
 
-  // Graceful fallback to In-Memory Graph Engine
-  const inMemory = new InMemoryGraphEngine();
-  globalForFalkor.falkorDriverInstance = inMemory;
-  return inMemory;
+    const FalkorDB = falkorModule.FalkorDB || (falkorModule.default as Record<string, unknown>)?.FalkorDB || falkorModule.default;
+    if (!FalkorDB || typeof FalkorDB.connect !== 'function') {
+      throw new Error('FalkorDB client constructor not found on module.');
+    }
+
+    let client;
+
+    if (url) {
+      client = await FalkorDB.connect({ url });
+    } else if (password) {
+      client = await FalkorDB.connect({
+        socket: { host, port, connectTimeout: 2000 },
+        username: username || undefined,
+        password
+      });
+    } else {
+      client = await FalkorDB.connect({
+        socket: { host, port, connectTimeout: 2000 }
+      });
+    }
+
+    // Verify database responsiveness with Cypher test query
+    const testGraph = client.selectGraph(graphName);
+    await testGraph.query('RETURN 1 as test');
+
+    const liveDriver = new FalkorLiveDriver(client, graphName);
+    globalForFalkor.falkorDriverInstance = liveDriver;
+    console.log(`[FalkorDB] Connected successfully to ${url ? 'cloud instance' : `${host}:${port}`} (Graph: ${graphName})`);
+    return liveDriver;
+  } catch (err) {
+    const connectionTarget = url ? 'FalkorDB Cloud URL' : `${host}:${port}`;
+    const errMsg = `Could not connect to FalkorDB at ${connectionTarget} (${err instanceof Error ? err.message : String(err)}). Configure FALKORDB_URL or FALKORDB_HOST in .env.local.`;
+    console.error(`[FalkorDB CRITICAL] ${errMsg}`);
+
+    const disconnected = new DisconnectedFalkorDriver(errMsg);
+    globalForFalkor.falkorDriverInstance = disconnected;
+    return disconnected;
+  }
 }

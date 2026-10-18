@@ -9,7 +9,8 @@ import {
   Share2, 
   CheckCircle2, 
   Package,
-  Layers
+  Layers,
+  ShieldAlert
 } from 'lucide-react';
 
 interface DependencyInvestigatorProps {
@@ -45,7 +46,7 @@ export function DependencyInvestigator({
     );
   }
 
-  const { target, path, introducingDirectDep, sharedInRepositories } = investigation;
+  const { target, path, introducingDirectDep, sharedInRepositories, vulnerabilities } = investigation;
 
   return (
     <div className="bg-zinc-900/60 border border-zinc-800 rounded-xl flex flex-col h-[650px] overflow-hidden shadow-sm">
@@ -103,6 +104,54 @@ export function DependencyInvestigator({
 
       {/* Investigation Details: Path & Cross-Repo Sharing */}
       <div className="flex-1 overflow-y-auto p-5 space-y-6">
+        {/* Security Findings & Advisories */}
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <h4 className="text-xs font-semibold uppercase tracking-wider text-zinc-400 font-mono flex items-center gap-1.5">
+              <ShieldAlert className="w-3.5 h-3.5 text-rose-400" />
+              Security Findings ({vulnerabilities && vulnerabilities.length > 0 ? `${vulnerabilities.length} Detected` : 'Clean'})
+            </h4>
+            <span className="text-[10px] font-mono text-zinc-500">OSV.dev Advisory Intel</span>
+          </div>
+
+          {vulnerabilities && vulnerabilities.length > 0 ? (
+            <div className="space-y-2">
+              {vulnerabilities.map((v) => (
+                <div key={v.id} className="p-3 rounded-lg border border-rose-800/60 bg-rose-950/20 text-xs">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono font-semibold text-rose-300">{v.cveId || v.id}</span>
+                      <span className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded uppercase ${
+                        v.severity === 'CRITICAL' ? 'bg-rose-900 text-rose-100' :
+                        v.severity === 'HIGH' ? 'bg-orange-900 text-orange-200' :
+                        'bg-amber-900 text-amber-200'
+                      }`}>
+                        {v.severity}
+                      </span>
+                      {v.fixedVersion && (
+                        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-950 border border-emerald-800 text-emerald-300">
+                          Fix: &gt;={v.fixedVersion}
+                        </span>
+                      )}
+                    </div>
+                    {v.url && (
+                      <a href={v.url} target="_blank" rel="noopener noreferrer" className="text-zinc-400 hover:text-zinc-200 text-[11px] flex items-center gap-1 font-mono">
+                        Advisory <ExternalLink className="w-3 h-3" />
+                      </a>
+                    )}
+                  </div>
+                  <p className="text-zinc-300 text-xs mt-1 leading-relaxed">{v.summary}</p>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="p-2.5 rounded-lg border border-emerald-900/40 bg-emerald-950/10 flex items-center gap-2 text-xs text-emerald-300">
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+              <span>No known vulnerabilities published in OSV for {target.name}@{target.version}.</span>
+            </div>
+          )}
+        </div>
+
         {/* Ordered Dependency Path */}
         <div>
           <div className="flex items-center justify-between mb-3">

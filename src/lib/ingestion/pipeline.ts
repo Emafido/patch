@@ -3,6 +3,7 @@ import { CYPHER_QUERIES } from '../graph/schema.ts';
 import { parseGitHubUrl, fetchGitHubRepoFiles } from './github.ts';
 import { parseLockfileTree } from './arborist.ts';
 import { getFixtureForRepo } from './fixtures.ts';
+import { queryOSVBatch } from '../vulnerabilities/osv.ts';
 import type { IngestionResult, RepositoryNode, SnapshotNode } from '../../types/index.ts';
 
 /**
@@ -115,6 +116,24 @@ export async function importRepository(
       rootId: rootInstallationId,
       snapshotId
     });
+
+    // Scan real package versions with OSV and store advisories in FalkorDB
+    try {
+      const scanResult = await queryOSVBatch(tree.packageVersions);
+      if (scanResult.vulnerabilities.length > 0) {
+        await driver.query(CYPHER_QUERIES.MERGE_VULNERABILITIES, {
+          vulns: scanResult.vulnerabilities
+        });
+      }
+      if (scanResult.links.length > 0) {
+        await driver.query(CYPHER_QUERIES.LINK_PACKAGE_VULNERABILITIES, {
+          links: scanResult.links
+        });
+      }
+      console.log(`[OSV] Stored ${scanResult.vulnerabilities.length} advisories for ${meta.repo} in FalkorDB`);
+    } catch (vulnErr) {
+      console.warn(`[Vulnerability Sync] Non-blocking advisory lookup note:`, vulnErr);
+    }
 
     const repoNode: RepositoryNode = {
       id: repositoryId,
