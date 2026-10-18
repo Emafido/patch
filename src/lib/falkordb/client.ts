@@ -148,6 +148,11 @@ export async function getFalkorDriver(options?: { allowMockInTests?: boolean }):
     const testGraph = client.selectGraph(graphName);
     await testGraph.query('RETURN 1 as test');
 
+    // Ensure essential indices exist (idempotent, safe across restarts)
+    ensureEssentialIndices(testGraph).catch(idxErr => {
+      console.warn('[FalkorDB] Index verification notice:', idxErr instanceof Error ? idxErr.message : String(idxErr));
+    });
+
     const liveDriver = new FalkorLiveDriver(client, graphName);
     globalForFalkor.falkorDriverInstance = liveDriver;
     console.log(`[FalkorDB] Connected successfully to ${url ? 'cloud instance' : `${host}:${port}`} (Graph: ${graphName})`);
@@ -162,3 +167,25 @@ export async function getFalkorDriver(options?: { allowMockInTests?: boolean }):
     return disconnected;
   }
 }
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function ensureEssentialIndices(graph: any): Promise<void> {
+  const indexStatements = [
+    'CREATE INDEX FOR (p:Portfolio) ON (p.id);',
+    'CREATE INDEX FOR (r:Repository) ON (r.id);',
+    'CREATE INDEX FOR (s:Snapshot) ON (s.id);',
+    'CREATE INDEX FOR (i:Installation) ON (i.id);',
+    'CREATE INDEX FOR (i:Installation) ON (i.snapshotId);',
+    'CREATE INDEX FOR (pv:PackageVersion) ON (pv.id);',
+    'CREATE INDEX FOR (v:Vulnerability) ON (v.id);'
+  ];
+
+  for (const stmt of indexStatements) {
+    try {
+      await graph.query(stmt);
+    } catch {
+      // Attribute is already indexed; safe to ignore
+    }
+  }
+}
+

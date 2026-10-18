@@ -229,32 +229,21 @@ export class InMemoryGraphEngine implements FalkorDriver {
       return { data: [{ chain }] as unknown as T[] };
     }
 
-    // 9. GET_SNAPSHOT_PACKAGES
-    if (trimmed.includes('(i:Installation)') && trimmed.includes('ORDER BY i.name')) {
-      const snapshotId = String(params.snapshotId);
-      const rootId = this.snapshotRoots.get(snapshotId);
-      if (!rootId) return { data: [] };
+    // 9. Single installation lookup by ID
+    if (trimmed.includes('MATCH (i:Installation { id: $installationId })')) {
+      const instId = String(params.installationId);
+      const inst = this.installations.get(instId);
+      return { data: (inst ? [inst] : []) as unknown as T[] };
+    }
 
-      // BFS to collect reachable installations scoped to snapshot
-      const visited = new Set<string>();
-      const queue = [rootId];
-      visited.add(rootId);
+    // 10. GET_SNAPSHOT_PACKAGES (direct snapshotId lookup excluding root)
+    if (trimmed.includes('(i:Installation') && trimmed.includes('ORDER BY i.name')) {
+      const snapshotId = String(params.snapshotId);
       const result: InstallationNode[] = [];
 
-      while (queue.length > 0) {
-        const current = queue.shift()!;
-        const children = this.dependsOn.get(current);
-        if (children) {
-          for (const childId of children.keys()) {
-            if (!visited.has(childId)) {
-              visited.add(childId);
-              const inst = this.installations.get(childId);
-              if (inst && inst.snapshotId === snapshotId) {
-                result.push(inst);
-                queue.push(childId);
-              }
-            }
-          }
+      for (const inst of this.installations.values()) {
+        if (inst.snapshotId === snapshotId && inst.packagePath !== 'root') {
+          result.push(inst);
         }
       }
 

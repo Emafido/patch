@@ -125,10 +125,11 @@ export const CYPHER_QUERIES = {
   `,
 
   // Query: What packages are installed in this repository snapshot?
+  // Direct indexed lookup on Installation.snapshotId, excluding root
   GET_SNAPSHOT_PACKAGES: `
-    MATCH (s:Snapshot { id: $snapshotId })-[:HAS_ROOT]->(root:Installation)
-    MATCH (root)-[:DEPENDS_ON*1..15]->(i:Installation)
-    RETURN DISTINCT 
+    MATCH (i:Installation { snapshotId: $snapshotId })
+    WHERE i.packagePath <> 'root'
+    RETURN 
       i.id as id,
       i.snapshotId as snapshotId,
       i.packagePath as packagePath,
@@ -156,11 +157,13 @@ export const CYPHER_QUERIES = {
   `,
 
   // Query: Does another imported repository use the same package version?
+  // Uses shared PackageVersion pivot and direct snapshotId index without backward path traversals
   GET_CROSS_REPO_SHARING: `
     MATCH (target:Installation { id: $installationId })-[:INSTANCE_OF]->(pv:PackageVersion)
-    MATCH (pv)<-[:INSTANCE_OF]-(otherI:Installation)
-    MATCH (otherI)<-[:DEPENDS_ON*0..15]-(otherRoot:Installation)<-[:HAS_ROOT]-(otherS:Snapshot)<-[:HAS_SNAPSHOT]-(otherR:Repository)
-    WHERE otherS.id <> $snapshotId AND otherS.status = 'SUCCESS'
+    MATCH (otherI:Installation)-[:INSTANCE_OF]->(pv)
+    WHERE otherI.snapshotId <> $snapshotId
+    MATCH (otherS:Snapshot { id: otherI.snapshotId })<-[:HAS_SNAPSHOT]-(otherR:Repository)
+    WHERE otherS.status = 'SUCCESS'
     RETURN DISTINCT
       otherR.id as repoId,
       otherR.name as repoName,

@@ -43,9 +43,26 @@ export async function getSnapshotPackages(snapshotId: string, search = ''): Prom
 export async function investigatePackage(snapshotId: string, installationId: string): Promise<InvestigationResult> {
   const driver = await getFalkorDriver();
 
-  // 1. Get package details
-  const packagesRes = await driver.query<InstallationNode>(CYPHER_QUERIES.GET_SNAPSHOT_PACKAGES, { snapshotId });
-  const target = packagesRes.data.find(p => p.id === installationId);
+  // 1. Get package details (fast direct index lookup on installation ID)
+  const targetRes = await driver.query<InstallationNode>(`
+    MATCH (i:Installation { id: $installationId })
+    RETURN 
+      i.id as id,
+      i.snapshotId as snapshotId,
+      i.packagePath as packagePath,
+      i.name as name,
+      i.version as version,
+      i.isDev as isDev,
+      i.isDirect as isDirect,
+      i.depth as depth
+  `, { installationId });
+
+  let target: InstallationNode | undefined = targetRes.data[0];
+  if (!target || target.snapshotId !== snapshotId) {
+    const packagesRes = await driver.query<InstallationNode>(CYPHER_QUERIES.GET_SNAPSHOT_PACKAGES, { snapshotId });
+    target = packagesRes.data.find(p => p.id === installationId);
+  }
+
   if (!target) {
     throw new Error(`Package installation ${installationId} not found in snapshot ${snapshotId}`);
   }
