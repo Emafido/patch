@@ -4,18 +4,83 @@ import type {
   InstallationNode, 
   InvestigationResult, 
   RepositorySummary, 
+  RepositoryNode,
+  SnapshotNode,
   DependencyPathItem,
   CrossRepoSharing,
   VulnerabilityNode
 } from '../../types/index.ts';
 
 /**
+ * Normalizes raw Cypher results or in-memory graph objects into the RepositorySummary contract:
+ * - Wraps flat repository fields inside `repository: RepositoryNode`
+ * - Extracts `latestSnapshot.properties` into a plain `SnapshotNode`, preserving string ID
+ * - Handles null snapshots
+ * - Preserves snapshotsCount as a number
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function normalizeRepositorySummary(raw: any): RepositorySummary {
+  if (!raw) {
+    throw new Error('Cannot normalize null or undefined repository summary');
+  }
+
+  // 1. Wrap flat repository fields inside repository
+  const repoRaw = raw.repository || raw;
+  const repository: RepositoryNode = {
+    id: String(repoRaw.id || raw.id || ''),
+    url: String(repoRaw.url || raw.url || ''),
+    name: String(repoRaw.name || raw.name || ''),
+    owner: String(repoRaw.owner || raw.owner || ''),
+    defaultBranch: String(repoRaw.defaultBranch || raw.defaultBranch || 'main'),
+    createdAt: String(repoRaw.createdAt || raw.createdAt || new Date().toISOString())
+  };
+
+  // 2. Extract latestSnapshot.properties into a plain SnapshotNode, preserving its string ID
+  let latestSnapshot: SnapshotNode | null = null;
+  const rawSnap = raw.latestSnapshot;
+  if (rawSnap) {
+    // In FalkorDB Cypher, node instances wrap properties under .properties
+    const props = (typeof rawSnap === 'object' && 'properties' in rawSnap && rawSnap.properties)
+      ? rawSnap.properties
+      : rawSnap;
+
+    if (props && props.id) {
+      latestSnapshot = {
+        id: String(props.id), // String ID: "snap:..." (preserves string ID, NOT numeric internal id)
+        repositoryId: String(props.repositoryId || repository.id),
+        commitSha: props.commitSha ? String(props.commitSha) : undefined,
+        createdAt: String(props.createdAt || repository.createdAt),
+        lockfileVersion: Number(props.lockfileVersion || 3),
+        totalPackages: Number(props.totalPackages || 0),
+        directCount: Number(props.directCount || 0),
+        transitiveCount: Number(props.transitiveCount || 0),
+        status: (props.status as 'SUCCESS' | 'FAILED') || 'SUCCESS',
+        errorMessage: props.errorMessage ? String(props.errorMessage) : undefined
+      };
+    }
+  }
+
+  // 3. Preserve snapshotsCount as a number
+  const snapshotsCount = typeof raw.snapshotsCount === 'number'
+    ? raw.snapshotsCount
+    : (Number(raw.snapshotsCount) || (latestSnapshot ? 1 : 0));
+
+  return {
+    repository,
+    latestSnapshot,
+    snapshotsCount
+  };
+}
+
+/**
  * List all repositories in a portfolio with their latest snapshot
  */
 export async function listRepositories(portfolioId = 'default'): Promise<RepositorySummary[]> {
   const driver = await getFalkorDriver();
-  const res = await driver.query<RepositorySummary>(CYPHER_QUERIES.LIST_REPOSITORIES, { portfolioId });
-  return res.data;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const res = await driver.query<any>(CYPHER_QUERIES.LIST_REPOSITORIES, { portfolioId });
+  const records = res.data || [];
+  return records.map(normalizeRepositorySummary);
 }
 
 /**

@@ -55,7 +55,7 @@ export default function Home() {
       });
       if (res.ok) {
         const data = await res.json();
-        setAgentResult(data);
+        setAgentResult(data.result || data);
       } else {
         const err = await res.json();
         console.error('Agent investigation error:', err);

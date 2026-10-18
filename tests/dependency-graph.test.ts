@@ -5,6 +5,7 @@ import { parseLockfileTree } from '../src/lib/ingestion/arborist.ts';
 import { FIXTURES } from '../src/lib/ingestion/fixtures.ts';
 import { InMemoryGraphEngine } from '../src/lib/falkordb/in-memory-engine.ts';
 import { CYPHER_QUERIES } from '../src/lib/graph/schema.ts';
+import { normalizeRepositorySummary } from '../src/lib/graph/queries.ts';
 import type { InstallationNode, DependencyPathItem, CrossRepoSharing } from '../src/types/index.ts';
 
 describe('Task 2.3 & 2.7: Input Validation', () => {
@@ -406,4 +407,151 @@ describe('Task 2.6 & 2.7: General-Purpose Ingestion & Cross-Repo Intelligence', 
     assert.ok(ghostMatch, 'Ghost should share next@16.2.6 with QuikAPI');
   });
 });
+
+describe('Regression: Repository Summary Normalization & Frontend API Contract', () => {
+  it('correctly normalizes raw FalkorDB-shaped Cypher responses', () => {
+    const rawFalkorDbRow = {
+      id: 'repo:emafido/ghost',
+      url: 'https://github.com/Emafido/ghost',
+      name: 'ghost',
+      owner: 'Emafido',
+      defaultBranch: 'master',
+      createdAt: '2026-10-18T11:22:41.350Z',
+      latestSnapshot: {
+        id: 1806, // internal numeric node id
+        labels: ['Snapshot'],
+        properties: {
+          id: 'snap:1792322561350:96so4',
+          repositoryId: 'repo:emafido/ghost',
+          commitSha: 'HEAD',
+          createdAt: '2026-10-18T11:22:41.350Z',
+          lockfileVersion: 3,
+          totalPackages: 425,
+          directCount: 11,
+          transitiveCount: 414,
+          status: 'SUCCESS'
+        }
+      },
+      snapshotsCount: 1
+    };
+
+    const summary = normalizeRepositorySummary(rawFalkorDbRow);
+
+    // 1. repository fields wrapped inside .repository
+    assert.ok(summary.repository, 'summary.repository must be defined');
+    assert.equal(summary.repository.id, 'repo:emafido/ghost');
+    assert.equal(summary.repository.name, 'ghost');
+    assert.equal(summary.repository.owner, 'Emafido');
+    assert.equal(summary.repository.url, 'https://github.com/Emafido/ghost');
+    assert.equal(summary.repository.defaultBranch, 'master');
+
+    // 2. latestSnapshot extracted from .properties, preserving string ID
+    assert.ok(summary.latestSnapshot, 'latestSnapshot must be defined');
+    assert.equal(summary.latestSnapshot?.id, 'snap:1792322561350:96so4');
+    assert.notEqual(summary.latestSnapshot?.id, '1806');
+    assert.equal(summary.latestSnapshot?.totalPackages, 425);
+    assert.equal(summary.latestSnapshot?.directCount, 11);
+    assert.equal(summary.latestSnapshot?.transitiveCount, 414);
+    assert.equal(summary.latestSnapshot?.status, 'SUCCESS');
+
+    // 3. snapshotsCount preserved as a number
+    assert.equal(typeof summary.snapshotsCount, 'number');
+    assert.equal(summary.snapshotsCount, 1);
+  });
+
+  it('handles repositories with null snapshots gracefully', () => {
+    const rawWithoutSnap = {
+      id: 'repo:emafido/empty',
+      url: 'https://github.com/Emafido/empty',
+      name: 'empty',
+      owner: 'Emafido',
+      defaultBranch: 'main',
+      createdAt: '2026-10-18T12:00:00Z',
+      latestSnapshot: null,
+      snapshotsCount: 0
+    };
+
+    const summary = normalizeRepositorySummary(rawWithoutSnap);
+    assert.ok(summary.repository);
+    assert.equal(summary.repository.id, 'repo:emafido/empty');
+    assert.equal(summary.latestSnapshot, null);
+    assert.equal(summary.snapshotsCount, 0);
+  });
+
+  it('validates RepositorySelector contract: select repo -> load packages -> investigate path', async () => {
+    // Simulate frontend selecting a repository and investigating package
+    const engine = new InMemoryGraphEngine();
+    const quikFixture = FIXTURES['emafido/quikapi'];
+    const ghostFixture = FIXTURES['emafido/ghost'];
+
+    // Ingest two repositories
+    for (const [key, fixture] of [['emafido/quikapi', quikFixture], ['emafido/ghost', ghostFixture]] as const) {
+      const snapId = `snap:${fixture.repo}:test`;
+      const tree = parseLockfileTree(snapId, fixture.packageJson, fixture.packageLockJson);
+
+      await engine.query(CYPHER_QUERIES.MERGE_REPOSITORY, {
+        portfolioId: 'default',
+        repositoryId: `repo:${key}`,
+        url: fixture.url,
+        name: fixture.repo,
+        owner: fixture.owner,
+        defaultBranch: fixture.defaultBranch,
+        createdAt: new Date().toISOString()
+      });
+
+      await engine.query(CYPHER_QUERIES.CREATE_SNAPSHOT, {
+        repositoryId: `repo:${key}`,
+        snapshotId: snapId,
+        rootInstallationId: `${snapId}:root`,
+        commitSha: 'HEAD',
+        createdAt: new Date().toISOString(),
+        lockfileVersion: 3,
+        totalPackages: tree.totalPackages,
+        directCount: tree.directCount,
+        transitiveCount: tree.transitiveCount,
+        status: 'SUCCESS',
+        rootName: tree.rootName,
+        rootVersion: tree.rootVersion
+      });
+
+      await engine.query(CYPHER_QUERIES.MERGE_PACKAGE_VERSIONS, { versions: tree.packageVersions });
+      await engine.query(CYPHER_QUERIES.CREATE_INSTALLATIONS, { installations: tree.installations });
+      await engine.query(CYPHER_QUERIES.CREATE_DEPENDENCY_EDGES, { edges: tree.edges });
+      await engine.query(CYPHER_QUERIES.CONNECT_ROOT_DIRECT, { rootId: `${snapId}:root`, snapshotId: snapId });
+    }
+
+    // 1. Test listRepositories output normalization
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rawList = await engine.query<any>(CYPHER_QUERIES.LIST_REPOSITORIES, { portfolioId: 'default' });
+    const normalizedList = rawList.data.map(normalizeRepositorySummary);
+    assert.equal(normalizedList.length, 2);
+
+    // 2. Test RepositorySelector reading item.repository.id and snap.id
+    for (const item of normalizedList) {
+      assert.ok(item.repository.id, 'item.repository.id must be defined');
+      assert.ok(item.repository.owner, 'item.repository.owner must be defined');
+      assert.ok(item.repository.name, 'item.repository.name must be defined');
+      assert.ok(item.latestSnapshot, 'item.latestSnapshot must be defined');
+      assert.ok(typeof item.latestSnapshot.id === 'string', 'snapshot id must be string');
+      assert.ok(item.latestSnapshot.totalPackages > 0, 'snapshot totalPackages must be > 0');
+    }
+
+    // 3. Test selecting the first repository
+    const selected = normalizedList[0];
+    const snapId = selected.latestSnapshot!.id;
+
+    // Load packages for this snapshot
+    const pkgRes = await engine.query<InstallationNode>(CYPHER_QUERIES.GET_SNAPSHOT_PACKAGES, { snapshotId: snapId });
+    assert.ok(pkgRes.data.length > 0, 'Packages must be returned for selected repository');
+
+    // 4. Test investigating a package in the selected snapshot
+    const targetPkg = pkgRes.data[0];
+    const pathRes = await engine.query<{ chain: DependencyPathItem[] }>(CYPHER_QUERIES.GET_DEPENDENCY_PATH, {
+      snapshotId: snapId,
+      installationId: targetPkg.id
+    });
+    assert.ok(pathRes.data[0]?.chain?.length >= 1, 'Path chain must exist from root to package');
+  });
+});
+
 
