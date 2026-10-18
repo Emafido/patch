@@ -252,12 +252,16 @@ export class InMemoryGraphEngine implements FalkorDriver {
       return { data: result as unknown as T[] };
     }
 
-    // 10. GET_CROSS_REPO_SHARING
-    if (trimmed.includes('MATCH (target:Installation { id: $installationId })-[:INSTANCE_OF]->(pv:PackageVersion)')) {
+    // 10. GET_CROSS_REPO_SHARING (strictly excludes current repository across all historical snapshots)
+    if (trimmed.includes('INSTANCE_OF') && trimmed.includes('$installationId') && (trimmed.includes('otherR') || trimmed.includes('GET_CROSS_REPO_SHARING'))) {
       const targetId = String(params.installationId);
       const snapshotId = String(params.snapshotId);
       const pvId = this.instanceOf.get(targetId);
       if (!pvId) return { data: [] };
+
+      // Identify current repository to strictly exclude all its snapshots
+      const currentSnap = this.snapshots.get(snapshotId);
+      const currentRepoId = currentSnap?.repositoryId;
 
       const sharings: CrossRepoSharing[] = [];
       const seenRepos = new Set<string>();
@@ -267,7 +271,8 @@ export class InMemoryGraphEngine implements FalkorDriver {
           const otherInst = this.installations.get(otherInstId);
           if (otherInst && otherInst.snapshotId !== snapshotId) {
             const otherSnap = this.snapshots.get(otherInst.snapshotId);
-            if (otherSnap && otherSnap.status === 'SUCCESS') {
+            // Strictly exclude any snapshot of the current repository
+            if (otherSnap && otherSnap.status === 'SUCCESS' && (!currentRepoId || otherSnap.repositoryId !== currentRepoId)) {
               const otherRepo = this.repositories.get(otherSnap.repositoryId);
               if (otherRepo && !seenRepos.has(otherRepo.id)) {
                 seenRepos.add(otherRepo.id);

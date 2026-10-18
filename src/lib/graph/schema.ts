@@ -157,19 +157,22 @@ export const CYPHER_QUERIES = {
   `,
 
   // Query: Does another imported repository use the same package version?
-  // Uses shared PackageVersion pivot and direct snapshotId index without backward path traversals
+  // Uses shared PackageVersion pivot and direct snapshotId index, excluding current repo across all snapshots
   GET_CROSS_REPO_SHARING: `
+    MATCH (currentS:Snapshot { id: $snapshotId })<-[:HAS_SNAPSHOT]-(currentR:Repository)
     MATCH (target:Installation { id: $installationId })-[:INSTANCE_OF]->(pv:PackageVersion)
     MATCH (otherI:Installation)-[:INSTANCE_OF]->(pv)
-    WHERE otherI.snapshotId <> $snapshotId
     MATCH (otherS:Snapshot { id: otherI.snapshotId })<-[:HAS_SNAPSHOT]-(otherR:Repository)
-    WHERE otherS.status = 'SUCCESS'
-    RETURN DISTINCT
+    WHERE otherR.id <> currentR.id AND otherS.status = 'SUCCESS'
+    WITH otherR, otherS, otherI
+    ORDER BY otherS.createdAt DESC
+    WITH otherR, head(collect(DISTINCT otherS.id)) as snapshotId, any(x IN collect(otherI.isDirect) WHERE x = true) as isDirect
+    RETURN 
       otherR.id as repoId,
       otherR.name as repoName,
       otherR.url as repoUrl,
-      otherS.id as snapshotId,
-      otherI.isDirect as isDirect
+      snapshotId,
+      isDirect
     ORDER BY otherR.name ASC
   `,
 
@@ -235,20 +238,23 @@ export const CYPHER_QUERIES = {
   `,
 
   // Query: Find vulnerabilities that affect multiple repositories across the portfolio (Shared Blast Radius)
+  // Scoped to latest successful snapshot per distinct repository
   GET_SHARED_VULNERABILITIES: `
     MATCH (p:Portfolio { id: $portfolioId })-[:CONTAINS]->(r:Repository)-[:HAS_SNAPSHOT]->(s:Snapshot)
     WHERE s.status = 'SUCCESS'
-    MATCH (i:Installation { snapshotId: s.id })-[:INSTANCE_OF]->(pv:PackageVersion)-[:AFFECTED_BY]->(v:Vulnerability)
-    WITH v, pv, r, s, i
+    WITH r, s ORDER BY s.createdAt DESC
+    WITH r, head(collect(s)) as latestS
+    MATCH (i:Installation { snapshotId: latestS.id })-[:INSTANCE_OF]->(pv:PackageVersion)-[:AFFECTED_BY]->(v:Vulnerability)
+    WITH v, pv, r, latestS, i
     WITH v, pv.name as packageName, collect(DISTINCT pv.version) as versions, collect(DISTINCT {
       repoId: r.id,
       repoName: r.name,
       repoUrl: r.url,
-      snapshotId: s.id,
+      snapshotId: latestS.id,
       installationPath: i.packagePath,
       isDirect: i.isDirect
-    }) as occurrences
-    WHERE size(occurrences) > 1
+    }) as occurrences, collect(DISTINCT r.id) as distinctRepoIds
+    WHERE size(distinctRepoIds) > 1
     RETURN 
       v.id as vulnId,
       v.cveId as cveId,
@@ -259,15 +265,17 @@ export const CYPHER_QUERIES = {
       packageName,
       versions,
       occurrences,
-      size(occurrences) as totalAffectedRepos
-    ORDER BY size(occurrences) DESC, v.severity DESC
+      size(distinctRepoIds) as totalAffectedRepos
+    ORDER BY size(distinctRepoIds) DESC, v.severity DESC
   `,
 
-  // Query: All vulnerable instances across portfolio
+  // Query: All vulnerable instances across portfolio (scoped to latest successful snapshot per repository)
   GET_ALL_VULNERABILITIES_IN_PORTFOLIO: `
     MATCH (p:Portfolio { id: $portfolioId })-[:CONTAINS]->(r:Repository)-[:HAS_SNAPSHOT]->(s:Snapshot)
     WHERE s.status = 'SUCCESS'
-    MATCH (i:Installation { snapshotId: s.id })-[:INSTANCE_OF]->(pv:PackageVersion)-[:AFFECTED_BY]->(v:Vulnerability)
+    WITH r, s ORDER BY s.createdAt DESC
+    WITH r, head(collect(s)) as latestS
+    MATCH (i:Installation { snapshotId: latestS.id })-[:INSTANCE_OF]->(pv:PackageVersion)-[:AFFECTED_BY]->(v:Vulnerability)
     RETURN DISTINCT
       v.id as vulnId,
       v.cveId as cveId,
@@ -280,7 +288,7 @@ export const CYPHER_QUERIES = {
       r.id as repoId,
       r.name as repoName,
       r.url as repoUrl,
-      s.id as snapshotId,
+      latestS.id as snapshotId,
       i.id as installationId,
       i.isDirect as isDirect,
       i.packagePath as packagePath,

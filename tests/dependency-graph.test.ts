@@ -554,4 +554,143 @@ describe('Regression: Repository Summary Normalization & Frontend API Contract',
   });
 });
 
+describe('Step 6 Data Accuracy: Multi-Snapshot Deduplication & Cross-Repo Sharing', () => {
+  it('excludes historical snapshots of current repository and deduplicates other repos with multiple snapshots', async () => {
+    const engine = new InMemoryGraphEngine();
+    const quikFixture = FIXTURES['emafido/quikapi'];
+    const ghostFixture = FIXTURES['emafido/ghost'];
+
+    // Ingest Repository A (QuikAPI) with Snapshot 1 (v1)
+    const qSnap1 = 'snap:quikapi:v1';
+    const treeQ1 = parseLockfileTree(qSnap1, quikFixture.packageJson, quikFixture.packageLockJson);
+    await engine.query(CYPHER_QUERIES.MERGE_REPOSITORY, {
+      portfolioId: 'default',
+      repositoryId: 'repo:emafido/quikapi',
+      url: quikFixture.url,
+      name: quikFixture.repo,
+      owner: quikFixture.owner,
+      defaultBranch: quikFixture.defaultBranch,
+      createdAt: '2026-10-18T10:00:00Z'
+    });
+    await engine.query(CYPHER_QUERIES.CREATE_SNAPSHOT, {
+      repositoryId: 'repo:emafido/quikapi',
+      snapshotId: qSnap1,
+      rootInstallationId: `${qSnap1}:root`,
+      commitSha: 'HEAD~1',
+      createdAt: '2026-10-18T10:00:00Z',
+      lockfileVersion: 3,
+      totalPackages: treeQ1.totalPackages,
+      directCount: treeQ1.directCount,
+      transitiveCount: treeQ1.transitiveCount,
+      status: 'SUCCESS',
+      rootName: treeQ1.rootName,
+      rootVersion: treeQ1.rootVersion
+    });
+    await engine.query(CYPHER_QUERIES.MERGE_PACKAGE_VERSIONS, { versions: treeQ1.packageVersions });
+    await engine.query(CYPHER_QUERIES.CREATE_INSTALLATIONS, { installations: treeQ1.installations });
+    await engine.query(CYPHER_QUERIES.CREATE_DEPENDENCY_EDGES, { edges: treeQ1.edges });
+    await engine.query(CYPHER_QUERIES.CONNECT_ROOT_DIRECT, { rootId: `${qSnap1}:root`, snapshotId: qSnap1 });
+
+    // Ingest Repository A (QuikAPI) with Snapshot 2 (v2 - latest)
+    const qSnap2 = 'snap:quikapi:v2';
+    const treeQ2 = parseLockfileTree(qSnap2, quikFixture.packageJson, quikFixture.packageLockJson);
+    await engine.query(CYPHER_QUERIES.CREATE_SNAPSHOT, {
+      repositoryId: 'repo:emafido/quikapi',
+      snapshotId: qSnap2,
+      rootInstallationId: `${qSnap2}:root`,
+      commitSha: 'HEAD',
+      createdAt: '2026-10-18T12:00:00Z',
+      lockfileVersion: 3,
+      totalPackages: treeQ2.totalPackages,
+      directCount: treeQ2.directCount,
+      transitiveCount: treeQ2.transitiveCount,
+      status: 'SUCCESS',
+      rootName: treeQ2.rootName,
+      rootVersion: treeQ2.rootVersion
+    });
+    await engine.query(CYPHER_QUERIES.MERGE_PACKAGE_VERSIONS, { versions: treeQ2.packageVersions });
+    await engine.query(CYPHER_QUERIES.CREATE_INSTALLATIONS, { installations: treeQ2.installations });
+    await engine.query(CYPHER_QUERIES.CREATE_DEPENDENCY_EDGES, { edges: treeQ2.edges });
+    await engine.query(CYPHER_QUERIES.CONNECT_ROOT_DIRECT, { rootId: `${qSnap2}:root`, snapshotId: qSnap2 });
+
+    // Ingest Repository B (Ghost) with Snapshot 1 (v1)
+    const gSnap1 = 'snap:ghost:v1';
+    const treeG1 = parseLockfileTree(gSnap1, ghostFixture.packageJson, ghostFixture.packageLockJson);
+    await engine.query(CYPHER_QUERIES.MERGE_REPOSITORY, {
+      portfolioId: 'default',
+      repositoryId: 'repo:emafido/ghost',
+      url: ghostFixture.url,
+      name: ghostFixture.repo,
+      owner: ghostFixture.owner,
+      defaultBranch: ghostFixture.defaultBranch,
+      createdAt: '2026-10-18T10:00:00Z'
+    });
+    await engine.query(CYPHER_QUERIES.CREATE_SNAPSHOT, {
+      repositoryId: 'repo:emafido/ghost',
+      snapshotId: gSnap1,
+      rootInstallationId: `${gSnap1}:root`,
+      commitSha: 'HEAD~1',
+      createdAt: '2026-10-18T10:00:00Z',
+      lockfileVersion: 3,
+      totalPackages: treeG1.totalPackages,
+      directCount: treeG1.directCount,
+      transitiveCount: treeG1.transitiveCount,
+      status: 'SUCCESS',
+      rootName: treeG1.rootName,
+      rootVersion: treeG1.rootVersion
+    });
+    await engine.query(CYPHER_QUERIES.MERGE_PACKAGE_VERSIONS, { versions: treeG1.packageVersions });
+    await engine.query(CYPHER_QUERIES.CREATE_INSTALLATIONS, { installations: treeG1.installations });
+    await engine.query(CYPHER_QUERIES.CREATE_DEPENDENCY_EDGES, { edges: treeG1.edges });
+    await engine.query(CYPHER_QUERIES.CONNECT_ROOT_DIRECT, { rootId: `${gSnap1}:root`, snapshotId: gSnap1 });
+
+    // Ingest Repository B (Ghost) with Snapshot 2 (v2 - latest)
+    const gSnap2 = 'snap:ghost:v2';
+    const treeG2 = parseLockfileTree(gSnap2, ghostFixture.packageJson, ghostFixture.packageLockJson);
+    await engine.query(CYPHER_QUERIES.CREATE_SNAPSHOT, {
+      repositoryId: 'repo:emafido/ghost',
+      snapshotId: gSnap2,
+      rootInstallationId: `${gSnap2}:root`,
+      commitSha: 'HEAD',
+      createdAt: '2026-10-18T12:00:00Z',
+      lockfileVersion: 3,
+      totalPackages: treeG2.totalPackages,
+      directCount: treeG2.directCount,
+      transitiveCount: treeG2.transitiveCount,
+      status: 'SUCCESS',
+      rootName: treeG2.rootName,
+      rootVersion: treeG2.rootVersion
+    });
+    await engine.query(CYPHER_QUERIES.MERGE_PACKAGE_VERSIONS, { versions: treeG2.packageVersions });
+    await engine.query(CYPHER_QUERIES.CREATE_INSTALLATIONS, { installations: treeG2.installations });
+    await engine.query(CYPHER_QUERIES.CREATE_DEPENDENCY_EDGES, { edges: treeG2.edges });
+    await engine.query(CYPHER_QUERIES.CONNECT_ROOT_DIRECT, { rootId: `${gSnap2}:root`, snapshotId: gSnap2 });
+
+    // Find a package shared between QuikAPI and Ghost (e.g. zod-validation-error)
+    const qPackages = await engine.query<InstallationNode>(CYPHER_QUERIES.GET_SNAPSHOT_PACKAGES, { snapshotId: qSnap2 });
+    const gPackages = await engine.query<InstallationNode>(CYPHER_QUERIES.GET_SNAPSHOT_PACKAGES, { snapshotId: gSnap2 });
+
+    const sharedPkg = qPackages.data.find(qp => gPackages.data.some(gp => gp.name === qp.name && gp.version === qp.version));
+    assert.ok(sharedPkg, 'There should be at least one shared package version between QuikAPI and Ghost fixtures');
+
+    // Query GET_CROSS_REPO_SHARING for the shared package in qSnap2
+    const crossSharing = await engine.query<CrossRepoSharing>(CYPHER_QUERIES.GET_CROSS_REPO_SHARING, {
+      snapshotId: qSnap2,
+      installationId: sharedPkg.id
+    });
+
+    // 1. "Other repositories" must NOT include QuikAPI (neither qSnap1 nor qSnap2)
+    const selfSharing = crossSharing.data.filter(s => s.repoId === 'repo:emafido/quikapi' || s.repoName === 'quikapi');
+    assert.equal(selfSharing.length, 0, 'Cross-repo sharing must strictly exclude all snapshots of the current repository');
+
+    // 2. Ghost must appear EXACTLY ONCE despite having 2 snapshots (gSnap1 and gSnap2)
+    const ghostSharing = crossSharing.data.filter(s => s.repoId === 'repo:emafido/ghost');
+    assert.equal(ghostSharing.length, 1, 'Repository with multiple snapshots must appear exactly once');
+
+    // 3. The count reflects distinct repositories (total = 1)
+    assert.equal(crossSharing.data.length, 1, 'Total cross-repo count must equal distinct repository count');
+  });
+});
+
+
 
