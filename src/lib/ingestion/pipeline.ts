@@ -86,6 +86,7 @@ export async function importRepository(
       directCount: tree.directCount,
       transitiveCount: tree.transitiveCount,
       status: 'SUCCESS',
+      errorMessage: null,
       rootName: tree.rootName,
       rootVersion: tree.rootVersion
     });

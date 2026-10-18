@@ -17,9 +17,9 @@ export async function POST(request: Request) {
     return NextResponse.json(result);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error('[API Import Error]', message);
+    console.error('[API Import Error Stack]', err);
     return NextResponse.json(
-      { error: message },
+      { error: message, stack: err instanceof Error ? err.stack : undefined },
       { status: 400 }
     );
   }

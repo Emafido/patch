@@ -144,7 +144,7 @@ export const CYPHER_QUERIES = {
   GET_DEPENDENCY_PATH: `
     MATCH (s:Snapshot { id: $snapshotId })-[:HAS_ROOT]->(root:Installation)
     MATCH (target:Installation { id: $installationId })
-    MATCH p = shortestPath((root)-[:DEPENDS_ON*1..15]->(target))
+    WITH shortestPath((root)-[:DEPENDS_ON*1..15]->(target)) AS p
     RETURN [n IN nodes(p) | {
       id: n.id,
       name: n.name,
@@ -213,8 +213,8 @@ export const CYPHER_QUERIES = {
 
   // Query: Get all vulnerable installations in a repository snapshot with their advisory details
   GET_VULNERABLE_PACKAGES_IN_SNAPSHOT: `
-    MATCH (s:Snapshot { id: $snapshotId })-[:HAS_ROOT]->(root:Installation)
-    MATCH (root)-[:DEPENDS_ON*1..15]->(i:Installation)-[:INSTANCE_OF]->(pv:PackageVersion)-[:AFFECTED_BY]->(v:Vulnerability)
+    MATCH (s:Snapshot { id: $snapshotId })
+    MATCH (i:Installation { snapshotId: s.id })-[:INSTANCE_OF]->(pv:PackageVersion)-[:AFFECTED_BY]->(v:Vulnerability)
     RETURN DISTINCT
       i.id as installationId,
       i.packagePath as packagePath,
@@ -233,9 +233,9 @@ export const CYPHER_QUERIES = {
 
   // Query: Find vulnerabilities that affect multiple repositories across the portfolio (Shared Blast Radius)
   GET_SHARED_VULNERABILITIES: `
-    MATCH (p:Portfolio { id: $portfolioId })-[:CONTAINS]->(r:Repository)-[:HAS_SNAPSHOT]->(s:Snapshot)-[:HAS_ROOT]->(root:Installation)
+    MATCH (p:Portfolio { id: $portfolioId })-[:CONTAINS]->(r:Repository)-[:HAS_SNAPSHOT]->(s:Snapshot)
     WHERE s.status = 'SUCCESS'
-    MATCH (root)-[:DEPENDS_ON*1..15]->(i:Installation)-[:INSTANCE_OF]->(pv:PackageVersion)-[:AFFECTED_BY]->(v:Vulnerability)
+    MATCH (i:Installation { snapshotId: s.id })-[:INSTANCE_OF]->(pv:PackageVersion)-[:AFFECTED_BY]->(v:Vulnerability)
     WITH v, pv, r, s, i
     WITH v, pv.name as packageName, collect(DISTINCT pv.version) as versions, collect(DISTINCT {
       repoId: r.id,
@@ -262,9 +262,9 @@ export const CYPHER_QUERIES = {
 
   // Query: All vulnerable instances across portfolio
   GET_ALL_VULNERABILITIES_IN_PORTFOLIO: `
-    MATCH (p:Portfolio { id: $portfolioId })-[:CONTAINS]->(r:Repository)-[:HAS_SNAPSHOT]->(s:Snapshot)-[:HAS_ROOT]->(root:Installation)
+    MATCH (p:Portfolio { id: $portfolioId })-[:CONTAINS]->(r:Repository)-[:HAS_SNAPSHOT]->(s:Snapshot)
     WHERE s.status = 'SUCCESS'
-    MATCH (root)-[:DEPENDS_ON*1..15]->(i:Installation)-[:INSTANCE_OF]->(pv:PackageVersion)-[:AFFECTED_BY]->(v:Vulnerability)
+    MATCH (i:Installation { snapshotId: s.id })-[:INSTANCE_OF]->(pv:PackageVersion)-[:AFFECTED_BY]->(v:Vulnerability)
     RETURN DISTINCT
       v.id as vulnId,
       v.cveId as cveId,

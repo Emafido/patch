@@ -2,7 +2,7 @@ import {
   findSharedVulnerabilities, 
   traceVulnerableDependencyPaths, 
   rankRemediationCandidates,
-  VulnerablePathTrace
+  type VulnerablePathTrace
 } from './tools.ts';
 import type { RemediationCandidate, SharedVulnerabilityGroup } from '../../types/index.ts';
 

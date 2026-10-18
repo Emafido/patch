@@ -13,8 +13,24 @@ import type {
  */
 export async function findSharedVulnerabilities(portfolioId = 'default'): Promise<SharedVulnerabilityGroup[]> {
   const driver = await getFalkorDriver();
-  const res = await driver.query<SharedVulnerabilityGroup>(CYPHER_QUERIES.GET_SHARED_VULNERABILITIES, { portfolioId });
-  return res.data || [];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const res = await driver.query<any>(CYPHER_QUERIES.GET_SHARED_VULNERABILITIES, { portfolioId });
+  const rawList = res.data || [];
+  
+  return rawList.map(row => ({
+    vulnerability: {
+      id: row.vulnId,
+      cveId: row.cveId,
+      summary: row.summary,
+      severity: row.severity,
+      fixedVersion: row.fixedVersion,
+      url: row.url
+    },
+    affectedPackageName: row.packageName,
+    affectedVersions: row.versions || [],
+    affectedRepositories: row.occurrences || [],
+    totalAffectedRepos: row.totalAffectedRepos || (row.occurrences ? row.occurrences.length : 0)
+  }));
 }
 
 export interface VulnerablePathTrace {

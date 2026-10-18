@@ -1,4 +1,4 @@
-import { FalkorDriver, QueryResult } from './types.ts';
+import type { FalkorDriver, QueryResult } from './types.ts';
 import { InMemoryGraphEngine } from './in-memory-engine.ts';
 
 class FalkorLiveDriver implements FalkorDriver {
@@ -33,13 +33,31 @@ class FalkorLiveDriver implements FalkorDriver {
     }
   }
 
+  private sanitizeParams(params: Record<string, unknown>): Record<string, unknown> {
+    const clean: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(params)) {
+      if (v === undefined) {
+        clean[k] = null;
+      } else if (Array.isArray(v)) {
+        clean[k] = v.map(item => (typeof item === 'object' && item !== null ? this.sanitizeParams(item as Record<string, unknown>) : (item === undefined ? null : item)));
+      } else if (typeof v === 'object' && v !== null) {
+        clean[k] = this.sanitizeParams(v as Record<string, unknown>);
+      } else {
+        clean[k] = v;
+      }
+    }
+    return clean;
+  }
+
   async query<T = Record<string, unknown>>(queryStr: string, params: Record<string, unknown> = {}): Promise<QueryResult<T>> {
     try {
-      const result = await this.graph.query(queryStr, { params });
+      const cleanParams = this.sanitizeParams(params);
+      const result = await this.graph.query(queryStr, { params: cleanParams });
       const records = result.data || [];
       return { data: records as T[], metadata: result.metadata };
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[FalkorDB Query Error] Query: ${queryStr.slice(0, 100)}... Params:`, JSON.stringify(params), 'Error:', msg);
       throw new Error(`FalkorDB query failed: ${msg}`);
     }
   }
@@ -116,13 +134,13 @@ export async function getFalkorDriver(options?: { allowMockInTests?: boolean }):
       client = await FalkorDB.connect({ url });
     } else if (password) {
       client = await FalkorDB.connect({
-        socket: { host, port, connectTimeout: 2000 },
+        socket: { host, port, connectTimeout: 10000 },
         username: username || undefined,
         password
       });
     } else {
       client = await FalkorDB.connect({
-        socket: { host, port, connectTimeout: 2000 }
+        socket: { host, port, connectTimeout: 10000 }
       });
     }
 
